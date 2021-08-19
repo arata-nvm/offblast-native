@@ -5,6 +5,43 @@ struct Law {
 	String url;
 	Array<String> haikus;
 };
+
+class Haiku {
+private:
+	String text;
+	String font;
+	Rect region;
+
+	Transition transition = Transition(1.0s, 1.0s);
+	bool living = true;
+	
+public:
+	Haiku(String text,  String font, Rect region) : text(text), font(font), region(region) { }
+
+	void update() {
+		this->transition.update(this->living);
+
+		this->transitionHover.update(this->region.mouseOver());
+	}
+
+	void draw() {
+		int alpha = 255 * this->transition.value();
+		FontAsset(this->font)(this->text).draw(this->region.pos, Color(0x33, 0x33, 0x33, alpha));
+	}
+
+	Rect getRegion() const {
+		return this->region;
+	}
+
+	void die() {
+		this->living = false;
+	}
+
+	bool isDied() const {
+		return !this->living && this->transition.isZero();
+	}
+};
+
 Array<Law> ReadLaws(String filename) {
 	const JSONReader json(filename);
 	Array<Law> laws;
@@ -32,43 +69,86 @@ String ChoiceRandomHaiku(Array<Law> laws) {
 	}
 }
 
+const int fontNum = 4;
+const int margin = 20;
+Optional<Haiku> NewHaiku(String text, Array<Haiku> others) {
+	const String font = U"Haiku{}"_fmt(RandomUint8() % fontNum);
+	const Rect rect = FontAsset(font)(text).region();
+	
+	const int windowWidth = Window::ClientWidth();
+	const int windowHeight = Window::ClientHeight();
+
+	for (int i = 0; i <= 10; i++) {
+		Point pos = RandomPoint(windowWidth - rect.w, windowHeight - rect.h);
+		const Rect region = rect.movedBy(pos);
+
+		bool collision = false;
+		for (const auto& other : others) {
+			if (region.stretched(margin).intersects(other.getRegion())) {
+				collision = true;
+				break;
+			}
+		}
+		if (collision) continue;
+
+		Logger.writeln(U"Found: {}, {}, {}"_fmt(text, font, region));
+		return Haiku(text, font, region);
+	}
+
+	return none;
+}
+
 void Main()
 {
-	// 背景を水色にする
-	Scene::SetBackground(ColorF(0.8, 0.9, 1.0));
+	// init window
+	Scene::SetBackground(Color(240, 236, 229));
+	Window::SetFullscreen(true);
 
-	// 大きさ 60 のフォントを用意
-	const Font font(60);
+	// init font
+	int base = 36;
+	FontAsset::Register(U"Haiku0", base , U"ipamp.ttf");
+	FontAsset::Register(U"Haiku1", base * 1.2, U"ipamp.ttf");
+	FontAsset::Register(U"Haiku2", base * 1.5, U"ipamp.ttf");
+	FontAsset::Register(U"Haiku3", base * 2.4, U"ipamp.ttf");
 
-	// 猫のテクスチャを用意
-	const Texture cat(Emoji(U"🐈"));
+	// init haiku
+	const Array<Law> laws = ReadLaws(U"api.json");
 
-	// 猫の座標
-	Vec2 catPos(640, 450);
+	Array<Haiku> haikus;
+	for (int i = 1; i < 10; i++) {
+		String text = ChoiceRandomHaiku(laws);
+		Optional<Haiku> haiku = NewHaiku(text, haikus);
+		if (haiku.has_value()) {
+			haikus << haiku.value();
+		}
+	}
 
+	// main loop
+	Timer timeToDie(5s, true);
+	Timer timeToBorn(10s, true);
 	while (System::Update())
 	{
-		// テキストを画面の中心に描く
-		font(U"Hello, Siv3D!🐣").drawAt(Scene::Center(), Palette::Black);
-
-		// 大きさをアニメーションさせて猫を表示する
-		cat.resized(100 + Periodic::Sine0_1(1s) * 20).drawAt(catPos);
-
-		// マウスカーソルに追従する半透明の赤い円を描く
-		Circle(Cursor::Pos(), 40).draw(ColorF(1, 0, 0, 0.5));
-
-		// [A] キーが押されたら
-		if (KeyA.down())
-		{
-			// Hello とデバッグ表示する
-			Print << U"Hello!";
+		if (timeToDie.reachedZero()) {
+			haikus[0].die();
+			timeToDie.set(10s);
+			timeToDie.start();
 		}
 
-		// ボタンが押されたら
-		if (SimpleGUI::Button(U"Move the cat", Vec2(600, 20)))
-		{
-			// 猫の座標を画面内のランダムな位置に移動する
-			catPos = RandomVec2(Scene::Rect());
+		haikus.remove_if([](Haiku haiku) { return haiku.isDied(); });
+
+		if (timeToBorn.reachedZero()) {
+			String text = ChoiceRandomHaiku(laws);
+			Optional<Haiku> haiku = NewHaiku(text, haikus);
+			if (haiku.has_value()) {
+				haikus << haiku.value();
+			}
+			timeToBorn.restart();
+		}
+
+		for (auto& haiku : haikus) {
+			haiku.update();
+
+			haiku.draw();
 		}
 	}
 }
