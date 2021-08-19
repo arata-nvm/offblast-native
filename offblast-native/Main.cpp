@@ -65,7 +65,7 @@ String ChoiceRandomHaiku(Array<Law> laws) {
 		String& haiku = law.haikus.choice();
 		if (haiku.includes(U" 施行する")) continue;
 
-		return haiku;
+		return haiku.replaced(U" ", U"　");
 	}
 }
 
