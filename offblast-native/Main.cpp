@@ -6,27 +6,39 @@ struct Law {
 	Array<String> haikus;
 };
 
+struct HaikuDetails {
+	String text;
+	String lawName;
+};
+
 class Haiku {
 private:
-	String text;
 	String font;
 	Rect region;
 
 	Transition transition = Transition(1.0s, 1.0s);
 	bool living = true;
-	
+
+	Transition transitionHover = Transition(0.4s, 0.2s);
+
 public:
-	Haiku(String text,  String font, Rect region) : text(text), font(font), region(region) { }
+	HaikuDetails details;
+
+	Haiku(HaikuDetails details, String font, Rect region) : details(details), font(font), region(region) { }
 
 	void update() {
 		this->transition.update(this->living);
 
+		if (this->region.mouseOver()) {
+			Cursor::RequestStyle(CursorStyle::Hand);
+		}
 		this->transitionHover.update(this->region.mouseOver());
 	}
 
-	void draw() {
+	void draw() const {
+		int red = 0x33 + 0x99 * this->transitionHover.value();
 		int alpha = 255 * this->transition.value();
-		FontAsset(this->font)(this->text).draw(this->region.pos, Color(0x33, 0x33, 0x33, alpha));
+		FontAsset(this->font)(this->details.text).draw(this->region.pos, Color(red, 0x33, 0x33, alpha));
 	}
 
 	Rect getRegion() const {
@@ -39,6 +51,10 @@ public:
 
 	bool isDied() const {
 		return !this->living && this->transition.isZero();
+	}
+
+	bool isSelected() const {
+		return this->region.leftClicked();
 	}
 };
 
@@ -57,7 +73,7 @@ Array<Law> ReadLaws(String filename) {
 	return laws;
 }
 
-String ChoiceRandomHaiku(Array<Law> laws) {
+HaikuDetails ChoiceRandomHaiku(Array<Law> laws) {
 	while (true) {
 		Law& law = laws.choice();
 		if (law.haikus.size() == 0) continue;
@@ -65,15 +81,16 @@ String ChoiceRandomHaiku(Array<Law> laws) {
 		String& haiku = law.haikus.choice();
 		if (haiku.includes(U" 施行する")) continue;
 
-		return haiku.replaced(U" ", U"　");
+		String text = haiku.replaced(U" ", U"　");
+		return { text, law.name };
 	}
 }
 
 const int fontNum = 4;
 const int margin = 20;
-Optional<Haiku> NewHaiku(String text, Array<Haiku> others) {
+Optional<Haiku> NewHaiku(HaikuDetails details, Array<Haiku> others) {
 	const String font = U"Haiku{}"_fmt(RandomUint8() % fontNum);
-	const Rect rect = FontAsset(font)(text).region();
+	const Rect rect = FontAsset(font)(details.text).region();
 	
 	const int windowWidth = Window::ClientWidth();
 	const int windowHeight = Window::ClientHeight();
@@ -91,8 +108,8 @@ Optional<Haiku> NewHaiku(String text, Array<Haiku> others) {
 		}
 		if (collision) continue;
 
-		Logger.writeln(U"Found: {}, {}, {}"_fmt(text, font, region));
-		return Haiku(text, font, region);
+		Logger.writeln(U"Found: {}, {}, {}"_fmt(details.text, font, region));
+		return Haiku(details, font, region);
 	}
 
 	return none;
@@ -103,6 +120,7 @@ void Main()
 	// init window
 	Scene::SetBackground(Color(240, 236, 229));
 	Window::SetFullscreen(true);
+	System::SetTerminationTriggers(UserAction::None);
 
 	// init font
 	int base = 36;
@@ -116,39 +134,62 @@ void Main()
 
 	Array<Haiku> haikus;
 	for (int i = 1; i < 10; i++) {
-		String text = ChoiceRandomHaiku(laws);
-		Optional<Haiku> haiku = NewHaiku(text, haikus);
+		HaikuDetails details = ChoiceRandomHaiku(laws);
+		Optional<Haiku> haiku = NewHaiku(details, haikus);
 		if (haiku.has_value()) {
 			haikus << haiku.value();
 		}
 	}
 
 	// main loop
-	Timer timeToDie(5s, true);
-	Timer timeToBorn(10s, true);
+	bool showModal = false;
+	Optional<HaikuDetails> viewingHaiku;
+
+	Timer timeToDie(8s, true);
 	while (System::Update())
 	{
-		if (timeToDie.reachedZero()) {
-			haikus[0].die();
-			timeToDie.set(10s);
-			timeToDie.start();
-		}
-
-		haikus.remove_if([](Haiku haiku) { return haiku.isDied(); });
-
-		if (timeToBorn.reachedZero()) {
-			String text = ChoiceRandomHaiku(laws);
-			Optional<Haiku> haiku = NewHaiku(text, haikus);
-			if (haiku.has_value()) {
-				haikus << haiku.value();
-			}
-			timeToBorn.restart();
-		}
-
 		for (auto& haiku : haikus) {
 			haiku.update();
 
 			haiku.draw();
+		}
+
+		if (showModal) {
+			HaikuDetails details = viewingHaiku.value();
+
+			Scene::Rect().draw(Color(0, 0, 0, 128));
+			Rect(Arg::center(Scene::Center()), Scene::Width(), 400).draw(Color(240, 236, 229));
+			const Color color = Color(0x33, 0x33, 0x33);
+			FontAsset(U"Haiku1")(details.lawName).drawAt(Scene::Center().movedBy(0, 50), color);
+			FontAsset(U"Haiku3")(details.text).drawAt(Scene::Center().movedBy(0, -50), color);
+
+			if (Scene::Rect().leftClicked()) {
+				showModal = false;
+			}
+			continue;
+		}
+
+		for (auto& haiku : haikus) {
+			if (haiku.isSelected()) {
+				showModal = true;
+				viewingHaiku = haiku.details;
+			}
+		}
+
+		if (timeToDie.reachedZero()) {
+			haikus[0].die();
+			timeToDie.restart();
+		}
+
+		haikus.remove_if([](Haiku haiku) { return haiku.isDied(); });
+
+		bool needMoreHaiku = haikus.size() < 10 && RandomUint8() % 100 == 0;
+		if (needMoreHaiku) {
+			HaikuDetails details = ChoiceRandomHaiku(laws);
+			Optional<Haiku> haiku = NewHaiku(details, haikus);
+			if (haiku.has_value()) {
+				haikus << haiku.value();
+			}
 		}
 	}
 }
